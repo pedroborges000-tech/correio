@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Etiqueta de Correio</title>
+<link rel="icon" href="data:,">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Etiqueta">
+<style>
+  html, body { margin: 0; padding: 0; background: #F2F4F7; }
+  #boot-msg {
+    font-family: -apple-system, Inter, sans-serif; color: #5B6B85;
+    padding: 40px 20px; text-align: center; font-size: 14px; line-height: 1.6;
+  }
+  #boot-error {
+    display: none; font-family: -apple-system, Inter, sans-serif; color: #B23A4E;
+    background: #FBEBEE; border: 1px solid #B23A4E55; border-radius: 8px;
+    margin: 20px; padding: 16px; font-size: 13px; white-space: pre-wrap; word-break: break-word;
+  }
+</style>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+</head>
+<body>
+<div id="root"><div id="boot-msg">Carregando…</div></div>
+<div id="boot-error"></div>
+
+<script>
+  window.addEventListener("error", function (e) {
+    var box = document.getElementById("boot-error");
+    if (!box) return;
+    box.style.display = "block";
+    box.textContent = "Deu um erro ao carregar o app:\n" + (e.message || e.error || "erro desconhecido") +
+      "\n\nVerifique sua conexão com a internet e recarregue a página. Se persistir, avise para corrigirmos.";
+  });
+</script>
+
+<script>
+  // Armazenamento local no dispositivo — dados ficam salvos neste navegador/aparelho.
+  window.storage = {
+    async get(key) {
+      const raw = localStorage.getItem("etiqueta-app:" + key);
+      if (raw === null) throw new Error("not found");
+      return { key, value: raw, shared: false };
+    },
+    async set(key, value) {
+      localStorage.setItem("etiqueta-app:" + key, value);
+      return { key, value, shared: false };
+    },
+    async delete(key) {
+      localStorage.removeItem("etiqueta-app:" + key);
+      return { key, deleted: true, shared: false };
+    },
+    async list(prefix) {
+      const p = "etiqueta-app:" + (prefix || "");
+      const keys = Object.keys(localStorage)
+        .filter((k) => k.startsWith(p))
+        .map((k) => k.slice("etiqueta-app:".length));
+      return { keys, prefix: prefix || null, shared: false };
+    },
+  };
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+function maskCEP(v) {
+  v = v.replace(/\D/g, "").slice(0, 8);
+  v = v.replace(/(\d{5})(\d)/, "$1-$2");
+  return v;
+}
+
+const TOKENS = {
+  bg: "#F2F4F7",
+  card: "#FFFFFF",
+  ink: "#0F1E3D",
+  inkMuted: "#5B6B85",
+  accent: "#0F6E68",
+  line: "#E1E5EC",
+  success: "#1E8A6E",
+  successSoft: "#E7F5EF",
+};
+
+function EnderecoFields({ data, onChange, onBlur }) {
+  const [buscando, setBuscando] = useState(false);
+  const [cepErro, setCepErro] = useState(false);
+  const set = (field) => (e) => onChange({ ...data, [field]: e.target.value });
+  const handleBlur = () => { if (onBlur) onBlur(data); };
+
+  const handleCepChange = async (e) => {
+    const masked = maskCEP(e.target.value);
+    let atual = { ...data, cep: masked };
+    onChange(atual);
+    setCepErro(false);
+    const digits = masked.replace(/\D/g, "");
+    if (digits.length === 8) {
+      setBuscando(true);
+      try {
+        const resp = await fetch(`https://viacep.com.br/ws/${digits}/json/`);
+        const json = await resp.json();
+        if (json.erro) {
+          setCepErro(true);
+        } else {
+          atual = {
+            ...atual,
+            rua: json.logradouro || atual.rua,
+            bairro: json.bairro || atual.bairro,
+            cidade: json.localidade || atual.cidade,
+            uf: json.uf || atual.uf,
+          };
+          onChange(atual);
+        }
+      } catch (err) {
+        // sem internet ou API fora do ar — usuário preenche na mão
+      } finally {
+        setBuscando(false);
+        // salva a versão mais recente (atual), nunca uma versão antiga capturada antes da busca
+        if (onBlur) onBlur(atual);
+      }
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div>
+        <label className="field-label">Nome</label>
+        <input className="field-input" value={data.nome} onChange={set("nome")} onBlur={handleBlur} placeholder="Nome completo" />
+      </div>
+      <div>
+        <label className="field-label">
+          CEP {buscando && <span style={{ color: "#5B6B85", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>· buscando endereço…</span>}
+          {cepErro && <span style={{ color: "#B23A4E", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>· CEP não encontrado</span>}
+        </label>
+        <input className="field-input" value={data.cep} onChange={handleCepChange} onBlur={handleBlur} placeholder="00000-000" inputMode="numeric" />
+      </div>
+      <div>
+        <label className="field-label">Rua</label>
+        <input className="field-input" value={data.rua} onChange={set("rua")} onBlur={handleBlur} placeholder="Rua Exemplo" />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <label className="field-label">Número</label>
+          <input className="field-input" value={data.numero} onChange={set("numero")} onBlur={handleBlur} placeholder="123" />
+        </div>
+        <div style={{ flex: 2 }}>
+          <label className="field-label">Complemento</label>
+          <input className="field-input" value={data.complemento} onChange={set("complemento")} onBlur={handleBlur} placeholder="Apto 4 (opcional)" />
+        </div>
+      </div>
+      <div>
+        <label className="field-label">Bairro</label>
+        <input className="field-input" value={data.bairro} onChange={set("bairro")} onBlur={handleBlur} placeholder="Bairro" />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 2 }}>
+          <label className="field-label">Cidade</label>
+          <input className="field-input" value={data.cidade} onChange={set("cidade")} onBlur={handleBlur} placeholder="Cidade" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label className="field-label">UF</label>
+          <input className="field-input" value={data.uf} onChange={(e) => onChange({ ...data, uf: e.target.value.toUpperCase().slice(0, 2) })} onBlur={handleBlur} placeholder="RS" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EnderecoTexto({ label, data }) {
+  const ruaNumero = [data.rua, data.numero].filter(Boolean).join(", ");
+  const linha1 = [ruaNumero, data.complemento].filter(Boolean).join(", ");
+  const linha2 = [data.cidade, data.uf].filter(Boolean).join(" - ");
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", color: "#000", fontWeight: 700, marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 15, lineHeight: 1.6, color: "#000" }}>
+        <div style={{ fontWeight: 700 }}>{data.nome || "________________"}</div>
+        <div>{linha1 || "________________"}</div>
+        <div>{data.bairro || "________________"}</div>
+        <div>{linha2 || "________________"}</div>
+        <div>CEP: {data.cep || "_____-___"}</div>
+      </div>
+    </div>
+  );
+}
+
+const EMPTY = { nome: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", uf: "", cep: "" };
+
+function App() {
+  const [ready, setReady] = useState(false);
+  const [remetente, setRemetente] = useState(EMPTY);
+  const [remetenteSavedNote, setRemetenteSavedNote] = useState("");
+  const [destinatario, setDestinatario] = useState(EMPTY);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await window.storage.get("remetente", false);
+        if (r) setRemetente(JSON.parse(r.value));
+      } catch (e) {
+        // sem dados salvos ainda
+      } finally {
+        setReady(true);
+      }
+    })();
+  }, []);
+
+  const saveRemetente = useCallback(async (next) => {
+    setRemetente(next);
+    try {
+      await window.storage.set("remetente", JSON.stringify(next), false);
+      setRemetenteSavedNote("Salvo");
+      setTimeout(() => setRemetenteSavedNote(""), 1400);
+    } catch (e) {
+      setRemetenteSavedNote("Falha ao salvar");
+    }
+  }, []);
+
+  const limparDestinatario = () => setDestinatario(EMPTY);
+
+  if (!ready) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.bg, color: TOKENS.inkMuted, fontFamily: "Inter, sans-serif" }}>
+        Carregando seus dados…
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-wrapper" style={{ minHeight: "100vh", background: TOKENS.bg, fontFamily: "'Inter', sans-serif" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        * { box-sizing: border-box; }
+        input { font-family: 'Inter', sans-serif; }
+        input:focus { outline: 2px solid ${TOKENS.accent}; outline-offset: 1px; }
+        .field-label {
+          font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+          color: ${TOKENS.inkMuted}; font-weight: 600; margin-bottom: 4px; display: block;
+        }
+        .field-input {
+          width: 100%; padding: 9px 11px; border-radius: 6px;
+          border: 1.5px solid ${TOKENS.line}; background: #fff;
+          font-size: 14.5px; color: ${TOKENS.ink};
+        }
+        .btn-ghost {
+          background: transparent; color: ${TOKENS.inkMuted}; border: 1.5px solid ${TOKENS.line};
+          border-radius: 6px; padding: 10px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+        }
+        .btn-primary {
+          background: ${TOKENS.accent}; color: #fff; border: none; border-radius: 6px;
+          padding: 11px 20px; font-size: 13.5px; font-weight: 700; cursor: pointer;
+        }
+        .card {
+          background: ${TOKENS.card}; border: 1px solid ${TOKENS.line}; border-radius: 10px; padding: 18px;
+        }
+        .print-only { display: none; }
+        @media print {
+          .screen-only { display: none !important; }
+          .print-only { display: block !important; }
+          .app-wrapper { background: #fff !important; min-height: 0 !important; }
+          html, body { background: #fff !important; }
+          @page { margin: 20mm; }
+        }
+        @media (max-width: 780px) {
+          .layout { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+
+      <div id="app-chrome" className="screen-only" style={{ maxWidth: 900, margin: "0 auto", padding: "28px 20px 60px" }}>
+        <header style={{ marginBottom: 22 }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: TOKENS.ink }}>Etiqueta de Correio</div>
+          <div style={{ color: TOKENS.inkMuted, fontSize: 13.5, marginTop: 3 }}>
+            Seus dados de remetente ficam salvos — só preencha o destinatário a cada envio.
+          </div>
+        </header>
+
+        <div className="layout" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+          <section className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: TOKENS.ink }}>Remetente (você)</div>
+              <span style={{ fontSize: 11, color: TOKENS.success, minHeight: 14 }}>{remetenteSavedNote}</span>
+            </div>
+            <EnderecoFields data={remetente} onChange={setRemetente} onBlur={saveRemetente} />
+          </section>
+
+          <section className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: TOKENS.ink }}>Destinatário</div>
+              <button className="btn-ghost" style={{ padding: "4px 10px", fontSize: 11.5 }} onClick={limparDestinatario} type="button">Limpar</button>
+            </div>
+            <EnderecoFields data={destinatario} onChange={setDestinatario} onBlur={() => {}} />
+          </section>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
+          <button className="btn-primary" onClick={() => window.print()} type="button">
+            Imprimir etiqueta
+          </button>
+        </div>
+      </div>
+
+      <div className="print-only">
+        <EnderecoTexto label="Remetente" data={remetente} />
+        <EnderecoTexto label="Destinatário" data={destinatario} />
+      </div>
+    </div>
+  );
+}
+
+try {
+  const rootEl = document.getElementById("root");
+  ReactDOM.createRoot(rootEl).render(<App />);
+} catch (err) {
+  const box = document.getElementById("boot-error");
+  if (box) {
+    box.style.display = "block";
+    box.textContent = "Deu um erro ao iniciar o app:\n" + (err && err.message ? err.message : String(err));
+  }
+}
+</script>
+</body>
+</html>
